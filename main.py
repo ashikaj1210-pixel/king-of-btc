@@ -1,8 +1,8 @@
-#!/usr/init/env python3
+#!/usr/bin/env python3
 """
 Production-Grade Automated BTC Scalping Engine & Web Dashboard
-Includes: Fib 0.71/0.786 OTE, Candlestick Pattern Confirmation,
-SL at Fib 1.0, TP1 at Fib 0.0, Dashboard UI, and Telegram Signal Bot.
+Includes: Secure Admin Auth, Masked Token, Memory Trimming,
+Fib OTE (0.71-0.786), Pin Bar/Hammer Pattern, SL at Fib 1.0, TP at Fib 0.0.
 """
 
 import asyncio
@@ -38,9 +38,11 @@ logger = logging.getLogger("BTC_SCALPER_ENGINE")
 CONFIG = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
     "TARGET_CHANNEL_ID": os.getenv("TARGET_CHANNEL_ID", "@cryptoscalperaj"),
+    "ADMIN_PASSWORD": os.getenv("ADMIN_PASSWORD", "secure_admin_pass123")  # Dashboard Auth Password
 }
 
 MEXC_FUTURES_REST = "https://contract.mexc.com"
+MAX_SIGNALS_LIMIT = 100  # Prevent memory leak by capping signal feed
 
 APP_STATE = {
     "active_signals_count": 0,
@@ -51,7 +53,7 @@ APP_STATE = {
 }
 
 # ============================================================================
-# 2. HTML WEB DASHBOARD TEMPLATE
+# 2. SECURE HTML WEB DASHBOARD TEMPLATE
 # ============================================================================
 
 HTML_TEMPLATE = """
@@ -80,7 +82,7 @@ HTML_TEMPLATE = """
                     <span class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
                     Fib OTE (0.71 - 0.786) Scalping Engine
                 </h1>
-                <p class="text-xs text-gray-400 mt-1">SL at Fib 1.0 · TP1 at Fib 0.0 · Candlestick Pattern Confirmed</p>
+                <p class="text-xs text-gray-400 mt-1">SL at Fib 1.0 · TP1 at Fib 0.0 · Pin Bar/Hammer Confirmed</p>
             </div>
             <div class="flex gap-2">
                 <button onclick="triggerTestSignal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
@@ -89,17 +91,21 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Telegram Config -->
+        <!-- Telegram Config with Auth -->
         <div class="card-bg p-5 rounded-2xl">
-            <h2 class="text-sm font-semibold text-gray-300 mb-3">⚙️ Telegram Bot Configuration</h2>
+            <h2 class="text-sm font-semibold text-gray-300 mb-3">⚙️ Secure Telegram Configuration</h2>
             <form id="configForm" onsubmit="saveConfig(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-xs text-gray-400 mb-1">Telegram Bot Token</label>
-                    <input type="text" id="botToken" value="{{ token }}" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
+                    <label class="block text-xs text-gray-400 mb-1">Telegram Bot Token (Masked)</label>
+                    <input type="password" id="botToken" value="{{ token }}" placeholder="Protected Token" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
                 </div>
                 <div>
                     <label class="block text-xs text-gray-400 mb-1">Target Channel ID</label>
                     <input type="text" id="channelId" value="{{ channel }}" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Admin Password (Required for Action)</label>
+                    <input type="password" id="adminPassword" placeholder="Enter admin password" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
                 </div>
                 <div class="md:col-span-2 flex justify-end">
                     <button type="submit" class="bg-gray-800 hover:bg-gray-700 text-white text-xs font-semibold px-5 py-2 rounded-xl transition border border-gray-700">
@@ -125,13 +131,13 @@ HTML_TEMPLATE = """
             </div>
             <div class="card-bg p-4 rounded-2xl">
                 <span class="text-xs text-gray-400">STRATEGY</span>
-                <div class="text-sm font-bold text-gray-200 mt-2">OTE + Fib 1.0 SL</div>
+                <div class="text-sm font-bold text-gray-200 mt-2">OTE + Pin Bar</div>
             </div>
         </div>
 
         <!-- Signal Feed -->
         <div class="space-y-4">
-            <h3 class="text-sm font-semibold text-gray-300">Live Signal Feed</h3>
+            <h3 class="text-sm font-semibold text-gray-300">Live Signal Feed (Max 100)</h3>
             <div class="space-y-4">
                 {% for sig in signals %}
                 <div class="card-bg p-5 rounded-2xl space-y-3">
@@ -176,7 +182,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div class="flex justify-between items-center pt-2 text-[11px]">
-                        <span class="text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded-lg border border-emerald-900/30">🕯️ Stone Pattern Confirmed</span>
+                        <span class="text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded-lg border border-emerald-900/30">🕯️ Pin Bar / Hammer Confirmed</span>
                         <span class="badge-status px-3 py-1 rounded-full font-bold">ACTIVE</span>
                     </div>
                 </div>
@@ -191,18 +197,34 @@ HTML_TEMPLATE = """
             e.preventDefault();
             const token = document.getElementById('botToken').value;
             const channel = document.getElementById('channelId').value;
+            const password = document.getElementById('adminPassword').value;
+
             fetch('/api/config', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({token: token, channel: channel})
-            }).then(res => res.json()).then(data => alert('Configuration saved!'));
+                body: JSON.stringify({token: token, channel: channel, password: password})
+            }).then(res => res.json()).then(data => {
+                if(data.success) alert('Configuration saved securely!');
+                else alert('Error: ' + (data.error || 'Unauthorized'));
+            });
         }
 
         function triggerTestSignal() {
-            fetch('/api/test-signal', {method: 'POST'})
+            const password = prompt("Enter Admin Password to send test signal:");
+            if(!password) return;
+
+            fetch('/api/test-signal', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({password: password})
+            })
             .then(res => res.json()).then(data => {
-                alert('Test signal dispatched to Telegram!');
-                location.reload();
+                if(data.success) {
+                    alert('Test signal dispatched to Telegram!');
+                    location.reload();
+                } else {
+                    alert('Unauthorized or Error: ' + (data.error || 'Failed'));
+                }
             });
         }
     </script>
@@ -211,7 +233,7 @@ HTML_TEMPLATE = """
 """
 
 # ============================================================================
-# 3. FLASK SERVER ROUTES
+# 3. FLASK SERVER ROUTES WITH AUTH
 # ============================================================================
 
 app = Flask("BTCScalpingDashboard")
@@ -231,14 +253,19 @@ def dashboard_home():
 @app.route("/api/config", methods=["POST"])
 def api_update_config():
     data = request.json
-    if data:
-        CONFIG["TELEGRAM_BOT_TOKEN"] = data.get("token", CONFIG["TELEGRAM_BOT_TOKEN"])
-        CONFIG["TARGET_CHANNEL_ID"] = data.get("channel", CONFIG["TARGET_CHANNEL_ID"])
-        return jsonify({"success": True})
-    return jsonify({"success": False}), 400
+    if not data or data.get("password") != CONFIG["ADMIN_PASSWORD"]:
+        return jsonify({"success": False, "error": "Unauthorized / Incorrect Password"}), 403
+    
+    CONFIG["TELEGRAM_BOT_TOKEN"] = data.get("token", CONFIG["TELEGRAM_BOT_TOKEN"])
+    CONFIG["TARGET_CHANNEL_ID"] = data.get("channel", CONFIG["TARGET_CHANNEL_ID"])
+    return jsonify({"success": True})
 
 @app.route("/api/test-signal", methods=["POST"])
 def api_test_signal():
+    data = request.json or {}
+    if data.get("password") != CONFIG["ADMIN_PASSWORD"]:
+        return jsonify({"success": False, "error": "Unauthorized"}), 403
+
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -257,7 +284,7 @@ def run_flask_server():
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ============================================================================
-# 4. MEXC FUTURES & STRATEGY ENGINE (Fib OTE + Stone Pattern + SL @ 1.0 + TP @ 0.0)
+# 4. MEXC FUTURES & STRATEGY ENGINE (Pin Bar + Trimmed Feed)
 # ============================================================================
 
 class MexcFuturesClient:
@@ -298,23 +325,24 @@ class ScalpingStrategyEngine:
         diff = high - low
         if direction == "LONG":
             return {
-                "1.0": low,       # SL for Long
+                "1.0": low,
                 "0.786": low + (diff * 0.786),
                 "0.71": low + (diff * 0.71),
-                "0.0": high,      # TP1 for Long
+                "0.0": high,
                 "-0.27": high + (diff * 0.27)
             }
         else:
             return {
-                "1.0": high,      # SL for Short
+                "1.0": high,
                 "0.786": high - (diff * 0.786),
                 "0.71": high - (diff * 0.71),
-                "0.0": low,       # TP1 for Short
+                "0.0": low,
                 "-0.27": low - (diff * 0.27)
             }
 
     @staticmethod
-    def check_stone_pattern(candles: List[Dict[str, Any]], direction: str) -> bool:
+    def check_pin_bar_pattern(candles: List[Dict[str, Any]], direction: str) -> bool:
+        """Pin Bar / Hammer / Rejection Candle Confirmation"""
         if len(candles) < 2:
             return False
         last_c = candles[-1]
@@ -323,13 +351,12 @@ class ScalpingStrategyEngine:
         if total_range == 0:
             return False
         
-        # Stone / Rejection candlestick confirmation logic
         if direction == "LONG":
             lower_wick = min(last_c["open"], last_c["close"]) - last_c["low"]
-            return lower_wick >= (total_range * 0.4) or (last_c["close"] > last_c["open"] and body / total_range >= 0.4)
+            return lower_wick >= (total_range * 0.5)  # Long rejection wick
         else:
             upper_wick = last_c["high"] - max(last_c["open"], last_c["close"])
-            return upper_wick >= (total_range * 0.4) or (last_c["close"] < last_c["open"] and body / total_range >= 0.4)
+            return upper_wick >= (total_range * 0.5)  # Short rejection wick
 
     @staticmethod
     def analyze_market(candles_15m: List[Dict[str, Any]], candles_5m: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -342,21 +369,22 @@ class ScalpingStrategyEngine:
         swing_high = max(highs)
         swing_low = min(lows)
 
-        trend = "LONG" if current_price > ((swing_high + swing_low) / 2) else "SHORT"
+        # Better momentum trend check using moving average or midpoint
+        ma_20 = sum([c["close"] for c in candles_15m[-20:]]) / 20
+        trend = "LONG" if current_price > ma_20 else "SHORT"
+        
         fibs = ScalpingStrategyEngine.calculate_fibonacci(swing_high, swing_low, trend)
 
-        # Check if price is within 0.71 - 0.786 OTE zone
         ote_min = min(fibs["0.71"], fibs["0.786"])
         ote_max = max(fibs["0.71"], fibs["0.786"])
         in_ote = ote_min <= current_price <= ote_max
 
-        # Check Stone / Rejection pattern confirmation
-        pattern_confirmed = ScalpingStrategyEngine.check_stone_pattern(candles_5m, trend)
+        pattern_confirmed = ScalpingStrategyEngine.check_pin_bar_pattern(candles_5m, trend)
 
         entry_avg = round((fibs["0.71"] + fibs["0.786"]) / 2, 2)
         tp1 = round(fibs["0.0"], 2)
         tp2 = round(fibs["-0.27"], 2)
-        sl = round(fibs["1.0"], 2)  # SL set strictly to Fib level 1.0
+        sl = round(fibs["1.0"], 2)
 
         rr_ratio = round(abs(tp1 - entry_avg) / abs(entry_avg - sl), 2) if abs(entry_avg - sl) > 0 else 2.5
 
@@ -451,25 +479,26 @@ async def send_manual_test_signal() -> bool:
         return False
 
     analysis = ScalpingStrategyEngine.analyze_market(candles_15m, candles_5m)
-    # Force valid for test signal preview if needed, or use real analysis result
-    analysis["valid"] = True
+    analysis["valid"] = True  # Forced for test signal view
     chart_buf = ChartGenerator.generate_chart_snapshot(candles_5m, analysis)
 
     caption = (
-        f"🚨 **BTCUSDT Perpetual Scalping Signal**\n"
-        f"Direction: **🟢 {analysis['direction']} (Fib OTE Confirmed)**\n\n"
+        f"🚨 **BTCUSDT Perpetual Scalping Signal (Test)**\n"
+        f"Direction: **🟢 {analysis['direction']} (OTE Confirmed)**\n\n"
         f"📍 Entry (OTE 0.71 - 0.786): `{analysis['entry']}`\n"
         f"🎯 TP1 (Fib 0.0): `{analysis['tp1']}`\n"
-        f"🎯 TP2 (Fib -0.27): `{analysis['tp2']}`\n"
         f"🛡️ SL (Fib 1.0): `{analysis['sl']}`\n"
         f"⚖️ R/R Ratio: `1:{analysis['rr']}`\n\n"
-        f"🕯️ *Condition Met:* Price reached 0.71/0.786 Fib level with Stone/Rejection Candlestick Pattern confirmation."
+        f"🕯️ *Condition:* Pin Bar / Hammer pattern confirmed at OTE zone."
     )
 
     success = await TelegramBotEngine.send_photo(chart_buf, caption)
     if success:
         APP_STATE["signals_feed"].insert(0, analysis)
-        APP_STATE["active_signals_count"] += 1
+        if len(APP_STATE["signals_feed"]) > MAX_SIGNALS_LIMIT:
+            APP_STATE["signals_feed"].pop()
+            
+        APP_STATE["active_signals_count"] = len(APP_STATE["signals_feed"])
         if analysis["direction"] == "LONG":
             APP_STATE["long_setups_count"] += 1
         else:
@@ -477,7 +506,7 @@ async def send_manual_test_signal() -> bool:
     return success
 
 # ============================================================================
-# 6. MAIN WORKER LOOP
+# 6. MAIN WORKER LOOP WITH FEED TRIMMING
 # ============================================================================
 
 async def automated_engine_loop():
@@ -500,8 +529,12 @@ async def automated_engine_loop():
                         f"⚖️ R/R: `1:{analysis['rr']}`"
                     )
                     await TelegramBotEngine.send_photo(chart_buf, caption)
+                    
                     APP_STATE["signals_feed"].insert(0, analysis)
-                    APP_STATE["active_signals_count"] += 1
+                    if len(APP_STATE["signals_feed"]) > MAX_SIGNALS_LIMIT:
+                        APP_STATE["signals_feed"].pop()  # Trim list to avoid memory leak
+                        
+                    APP_STATE["active_signals_count"] = len(APP_STATE["signals_feed"])
         except Exception as e:
             logger.error(f"Error in background loop: {e}")
 
@@ -510,7 +543,7 @@ async def automated_engine_loop():
 def main():
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
-    logger.info("Dashboard & Scalping Engine running on port 8080.")
+    logger.info("Secure Dashboard & Scalping Engine running on port 8080.")
 
     try:
         loop = asyncio.new_event_loop()
