@@ -1,0 +1,5 @@
+aiohttp==3.9.3
+flask==3.0.2
+matplotlib==3.8.3
+numpy==1.26.4
+requests==2.31.0
