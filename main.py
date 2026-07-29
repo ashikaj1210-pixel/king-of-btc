@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Advanced Institutional ICT/SMC & Fib OTE Scalping Engine for BTC_USDT (MEXC Futures)
-Features: SMC/SNR, Liquidity Sweep, Trap Filters, Trend Filtering, Volatility Guard,
-Advanced Dashboard with Performance Analytics, and TradingView Chart Integration.
+(No Password / No Control Panel Security - Direct Access)
 """
 
 import asyncio
@@ -13,7 +12,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -37,8 +35,7 @@ logger = logging.getLogger("SMC_FIB_ENGINE")
 
 CONFIG = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
-    "TARGET_CHANNEL_ID": os.getenv("TARGET_CHANNEL_ID", "@cryptoscalperaj"),
-    "ADMIN_PASSWORD": os.getenv("ADMIN_PASSWORD", "secure_admin_pass123")
+    "TARGET_CHANNEL_ID": os.getenv("TARGET_CHANNEL_ID", "@cryptoscalperaj")
 }
 
 MEXC_FUTURES_REST = "https://contract.mexc.com"
@@ -53,7 +50,7 @@ APP_STATE = {
 }
 
 # ============================================================================
-# 2. HTML DASHBOARD TEMPLATE (ANALYTICS & TRADINGVIEW PREVIEW)
+# 2. HTML DASHBOARD TEMPLATE (DIRECT ACCESS / NO LOGIN REQUIRED)
 # ============================================================================
 
 HTML_TEMPLATE = """
@@ -74,7 +71,7 @@ HTML_TEMPLATE = """
 <body class="p-4 md:p-8">
     <div class="max-w-6xl mx-auto space-y-6">
         
-        <!-- Header & Controls -->
+        <!-- Header & Quick Actions -->
         <div class="card-bg p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
                 <h1 class="text-xl font-bold flex items-center gap-2">
@@ -97,7 +94,7 @@ HTML_TEMPLATE = """
         <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
             <div class="card-bg p-4 rounded-2xl">
                 <span class="text-xs text-gray-400">WIN RATIO</span>
-                <div class="text-2xl font-bold text-emerald-400 mt-1" id="winRatio">81.8%</div>
+                <div class="text-2xl font-bold text-emerald-400 mt-1">81.8%</div>
             </div>
             <div class="card-bg p-4 rounded-2xl">
                 <span class="text-xs text-gray-400">WINS / LOSSES</span>
@@ -121,30 +118,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Configuration Settings -->
-        <div class="card-bg p-5 rounded-2xl">
-            <h2 class="text-sm font-semibold text-gray-300 mb-3">⚙️ Secure Bot Configuration</h2>
-            <form id="configForm" onsubmit="saveConfig(event)" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-xs text-gray-400 mb-1">Telegram Bot Token</label>
-                    <input type="password" id="botToken" value="{{ token }}" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
-                </div>
-                <div>
-                    <label class="block text-xs text-gray-400 mb-1">Target Channel ID</label>
-                    <input type="text" id="channelId" value="{{ channel }}" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
-                </div>
-                <div>
-                    <label class="block text-xs text-gray-400 mb-1">Admin Password</label>
-                    <input type="password" id="adminPassword" placeholder="Enter password" class="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500">
-                </div>
-                <div class="md:col-span-3 flex justify-end">
-                    <button type="submit" class="bg-gray-800 hover:bg-gray-700 text-white text-xs font-semibold px-5 py-2 rounded-xl transition border border-gray-700">
-                        💾 Save Configurations
-                    </button>
-                </div>
-            </form>
-        </div>
-
         <!-- Main Layout: TradingView Live View & Recent Signals -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
@@ -154,7 +127,6 @@ HTML_TEMPLATE = """
                     <h3 class="text-sm font-semibold text-gray-300">📈 Live TradingView Chart View (BTCUSDT.P)</h3>
                     <a href="https://www.tradingview.com/chart/?symbol=MEXC%3ABTCUSDT" target="_blank" class="text-xs text-emerald-400 hover:underline">Open in TradingView ↗</a>
                 </div>
-                <!-- TradingView Widget Embed -->
                 <div class="h-[450px] w-full rounded-xl overflow-hidden border border-gray-800">
                     <div class="tradingview-widget-container" style="height:100%;width:100%">
                         <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
@@ -176,7 +148,7 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Signal Report List (Resent 30-50 Signals) -->
+            <!-- Signal Report List -->
             <div class="card-bg p-5 rounded-2xl space-y-4 flex flex-col h-[525px]">
                 <h3 class="text-sm font-semibold text-gray-300">📋 Recent Signals Feed ({{ signals|length }})</h3>
                 <div class="overflow-y-auto space-y-3 pr-2 flex-grow">
@@ -207,37 +179,17 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        function saveConfig(e) {
-            e.preventDefault();
-            const token = document.getElementById('botToken').value;
-            const channel = document.getElementById('channelId').value;
-            const password = document.getElementById('adminPassword').value;
-
-            fetch('/api/config', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({token: token, channel: channel, password: password})
-            }).then(res => res.json()).then(data => {
-                if(data.success) alert('Configuration saved successfully!');
-                else alert('Error: ' + (data.error || 'Unauthorized'));
-            });
-        }
-
         function triggerAction(actionType) {
-            const password = prompt("Enter Admin Password:");
-            if(!password) return;
-
             fetch('/api/' + actionType, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({password: password})
+                headers: {'Content-Type': 'application/json'}
             })
             .then(res => res.json()).then(data => {
                 if(data.success) {
                     alert('Action executed successfully!');
                     location.reload();
                 } else {
-                    alert('Failed: ' + (data.error || 'Unauthorized'));
+                    alert('Failed: ' + (data.error || 'Unknown error'));
                 }
             });
         }
@@ -247,7 +199,7 @@ HTML_TEMPLATE = """
 """
 
 # ============================================================================
-# 3. FLASK SERVER BACKEND WITH AUTH
+# 3. FLASK SERVER BACKEND (NO AUTH)
 # ============================================================================
 
 app = Flask("SMCFibScalpDashboard")
@@ -256,29 +208,13 @@ app = Flask("SMCFibScalpDashboard")
 def dashboard_home():
     return render_template_string(
         HTML_TEMPLATE,
-        token=CONFIG["TELEGRAM_BOT_TOKEN"],
-        channel=CONFIG["TARGET_CHANNEL_ID"],
         active_count=APP_STATE["active_signals_count"],
         pending_count=APP_STATE["pending_signals_count"],
         signals=APP_STATE["signals_feed"]
     )
 
-@app.route("/api/config", methods=["POST"])
-def api_update_config():
-    data = request.json
-    if not data or data.get("password") != CONFIG["ADMIN_PASSWORD"]:
-        return jsonify({"success": False, "error": "Unauthorized"}), 403
-    
-    CONFIG["TELEGRAM_BOT_TOKEN"] = data.get("token", CONFIG["TELEGRAM_BOT_TOKEN"])
-    CONFIG["TARGET_CHANNEL_ID"] = data.get("channel", CONFIG["TARGET_CHANNEL_ID"])
-    return jsonify({"success": True})
-
 @app.route("/api/test-signal", methods=["POST"])
 def api_test_signal():
-    data = request.json or {}
-    if data.get("password") != CONFIG["ADMIN_PASSWORD"]:
-        return jsonify({"success": False, "error": "Unauthorized"}), 403
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -290,10 +226,6 @@ def api_test_signal():
 
 @app.route("/api/daily-report", methods=["POST"])
 def api_daily_report():
-    data = request.json or {}
-    if data.get("password") != CONFIG["ADMIN_PASSWORD"]:
-        return jsonify({"success": False, "error": "Unauthorized"}), 403
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -371,7 +303,7 @@ class AdvancedStrategyEngine:
         ma_20 = sum(closes_15m) / 20
         trend = "LONG" if current_price > ma_20 else "SHORT"
 
-        # 2. Fibonacci OTE Zone (0.71 - 0.786) & SMC / S&R Body Close Check
+        # 2. Fibonacci OTE Zone (0.71 - 0.786) & SMC Check
         highs_30 = [c["high"] for c in candles_15m[-30:]]
         lows_30 = [c["low"] for c in candles_15m[-30:]]
         swing_high = max(highs_30)
@@ -395,31 +327,25 @@ class AdvancedStrategyEngine:
         ote_max = max(ote_71, ote_786)
         in_ote = ote_min <= current_price <= ote_max
 
-        # 3. S&R Body Close Validation & Liquidity Sweep Check
+        # 3. S&R Body Close & Trap Filters
         last_c = candles_5m[-1]
         body_size = abs(last_c["close"] - last_c["open"])
         total_candle_range = last_c["high"] - last_c["low"]
-        is_not_long_wick = total_candle_range == 0 or (body_size / total_candle_range) > 0.35  # Ignore long wick fakeouts
+        is_not_long_wick = total_candle_range == 0 or (body_size / total_candle_range) > 0.35
 
-        # Volatility & Volume Filter (Skip high volatility or fake volume spikes)
         avg_vol = sum([c["volume"] for c in candles_5m[-20:]]) / 20
-        valid_volume = last_c["volume"] <= (avg_vol * 3.5)  # Skip extreme volatility spikes
+        valid_volume = last_c["volume"] <= (avg_vol * 3.5)
 
-        # 4-5 Trap & Fake Breakout Filters Passed
         trap_filter_passed = is_not_long_wick and valid_volume
-
         is_valid = in_ote and trap_filter_passed
-
-        entry1 = round(ote_min, 2)
-        entry2 = round(ote_max, 2)
 
         return {
             "valid": is_valid,
             "symbol": "BTCUSDT.P",
             "direction": trend,
             "live_price": current_price,
-            "entry1": entry1,
-            "entry2": entry2,
+            "entry1": round(ote_min, 2),
+            "entry2": round(ote_max, 2),
             "tp1": round(tp1, 2),
             "tp2": round(tp2, 2),
             "sl": round(sl, 2),
@@ -446,7 +372,6 @@ class ChartVisualizer:
             ax.plot([dates[i], dates[i]], [c["low"], c["high"]], color=color, linewidth=1)
             ax.bar(dates[i], abs(c["close"] - c["open"]), bottom=min(c["open"], c["close"]), color=color, width=0.0015)
 
-        # Plot Strategy Levels on Chart
         ax.axhline(signal["entry1"], color="#ff9800", linestyle="--", label=f"Entry 1: {signal['entry1']}")
         ax.axhline(signal["entry2"], color="#ff5722", linestyle="--", label=f"Entry 2: {signal['entry2']}")
         ax.axhline(signal["tp1"], color="#4caf50", linestyle="-.", label=f"TP1: {signal['tp1']}")
@@ -472,7 +397,7 @@ async def send_signal_to_telegram(is_test: bool = False) -> bool:
 
     analysis = AdvancedStrategyEngine.analyze(c15, c5)
     if is_test:
-        analysis["valid"] = True  # Force for test
+        analysis["valid"] = True
 
     chart_img = ChartVisualizer.draw_chart(c5, analysis)
     tv_link = "https://www.tradingview.com/chart/?symbol=MEXC%3ABTCUSDT.P"
@@ -552,7 +477,7 @@ async def background_worker():
 
 def main():
     threading.Thread(target=run_flask_server, daemon=True).start()
-    logger.info("Dashboard & SMC Fib Engine running successfully.")
+    logger.info("Dashboard & SMC Fib Engine running successfully (No Auth).")
 
     try:
         loop = asyncio.new_event_loop()
