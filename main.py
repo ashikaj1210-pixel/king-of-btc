@@ -38,11 +38,11 @@ logger = logging.getLogger("BTC_SCALPER_ENGINE")
 CONFIG = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN", ""),
     "TARGET_CHANNEL_ID": os.getenv("TARGET_CHANNEL_ID", "@cryptoscalperaj"),
-    "ADMIN_PASSWORD": os.getenv("ADMIN_PASSWORD", "secure_admin_pass123")  # Dashboard Auth Password
+    "ADMIN_PASSWORD": os.getenv("ADMIN_PASSWORD", "secure_admin_pass123")
 }
 
 MEXC_FUTURES_REST = "https://contract.mexc.com"
-MAX_SIGNALS_LIMIT = 100  # Prevent memory leak by capping signal feed
+MAX_SIGNALS_LIMIT = 100
 
 APP_STATE = {
     "active_signals_count": 0,
@@ -284,7 +284,7 @@ def run_flask_server():
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # ============================================================================
-# 4. MEXC FUTURES & STRATEGY ENGINE (Pin Bar + Trimmed Feed)
+# 4. MEXC FUTURES & SAFE KLINE PARSER
 # ============================================================================
 
 class MexcFuturesClient:
@@ -295,7 +295,7 @@ class MexcFuturesClient:
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession()
 
-    async def fetch_klines(self, symbol: str = "BTC_USDT", interval: str = "Min5", limit: int = 120) -> List[Dict[str, Any]]:
+    async def fetch_klines(self, symbol: str = "BTC_USDT", interval: str = "5m", limit: int = 120) -> List[Dict[str, Any]]:
         await self.init_session()
         mexc_interval = "Min5" if interval == "5m" else "Min15"
         url = f"{MEXC_FUTURES_REST}/api/v1/contract/kline/{symbol}?interval={mexc_interval}&limit={limit}"
@@ -304,19 +304,37 @@ class MexcFuturesClient:
                 if resp.status == 200:
                     data = await resp.json()
                     raw_candles = data.get("data", [])
+                    
+                    # Safe check if raw_candles is dict or list or string to prevent crashes
+                    if isinstance(raw_candles, dict):
+                        raw_candles = raw_candles.get("result", raw_candles.get("list", []))
+                    if not isinstance(raw_candles, list):
+                        return []
+
                     formatted = []
                     for c in raw_candles:
-                        formatted.append({
-                            "time": int(c.get("time", c.get("t", 0))),
-                            "open": float(c.get("open", c.get("o", 0))),
-                            "high": float(c.get("high", c.get("h", 0))),
-                            "low": float(c.get("low", c.get("l", 0))),
-                            "close": float(c.get("close", c.get("c", 0))),
-                            "volume": float(c.get("volume", c.get("v", 0)))
-                        })
+                        if isinstance(c, dict):
+                            formatted.append({
+                                "time": int(c.get("time", c.get("t", 0))),
+                                "open": float(c.get("open", c.get("o", 0))),
+                                "high": float(c.get("high", c.get("h", 0))),
+                                "low": float(c.get("low", c.get("l", 0))),
+                                "close": float(c.get("close", c.get("c", 0))),
+                                "volume": float(c.get("volume", c.get("v", 0)))
+                            })
+                        elif isinstance(c, (list, tuple)) and len(c) >= 6:
+                            # Handling array-based kline format if returned by MEXC
+                            formatted.append({
+                                "time": int(c[0]),
+                                "open": float(c[1]),
+                                "high": float(c[2]),
+                                "low": float(c[3]),
+                                "close": float(c[4]),
+                                "volume": float(c[5])
+                            })
                     return formatted
         except Exception as e:
-            logger.error(f"Error fetching klines: {e}")
+            logger.error(f"Error fetching klines safely: {e}")
         return []
 
 class ScalpingStrategyEngine:
@@ -342,7 +360,6 @@ class ScalpingStrategyEngine:
 
     @staticmethod
     def check_pin_bar_pattern(candles: List[Dict[str, Any]], direction: str) -> bool:
-        """Pin Bar / Hammer / Rejection Candle Confirmation"""
         if len(candles) < 2:
             return False
         last_c = candles[-1]
@@ -353,10 +370,10 @@ class ScalpingStrategyEngine:
         
         if direction == "LONG":
             lower_wick = min(last_c["open"], last_c["close"]) - last_c["low"]
-            return lower_wick >= (total_range * 0.5)  # Long rejection wick
+            return lower_wick >= (total_range * 0.5)
         else:
             upper_wick = last_c["high"] - max(last_c["open"], last_c["close"])
-            return upper_wick >= (total_range * 0.5)  # Short rejection wick
+            return upper_wick >= (total_range * 0.5)
 
     @staticmethod
     def analyze_market(candles_15m: List[Dict[str, Any]], candles_5m: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -369,7 +386,6 @@ class ScalpingStrategyEngine:
         swing_high = max(highs)
         swing_low = min(lows)
 
-        # Better momentum trend check using moving average or midpoint
         ma_20 = sum([c["close"] for c in candles_15m[-20:]]) / 20
         trend = "LONG" if current_price > ma_20 else "SHORT"
         
@@ -475,11 +491,11 @@ async def send_manual_test_signal() -> bool:
     mexc = MexcFuturesClient()
     candles_15m = await mexc.fetch_klines("BTC_USDT", interval="15m", limit=60)
     candles_5m = await mexc.fetch_klines("BTC_USDT", interval="5m", limit=60)
-    if not candles_15m or not candles_5m:
+    if not candles_5m:
         return False
 
     analysis = ScalpingStrategyEngine.analyze_market(candles_15m, candles_5m)
-    analysis["valid"] = True  # Forced for test signal view
+    analysis["valid"] = True
     chart_buf = ChartGenerator.generate_chart_snapshot(candles_5m, analysis)
 
     caption = (
@@ -506,7 +522,7 @@ async def send_manual_test_signal() -> bool:
     return success
 
 # ============================================================================
-# 6. MAIN WORKER LOOP WITH FEED TRIMMING
+# 6. MAIN WORKER LOOP
 # ============================================================================
 
 async def automated_engine_loop():
@@ -532,7 +548,7 @@ async def automated_engine_loop():
                     
                     APP_STATE["signals_feed"].insert(0, analysis)
                     if len(APP_STATE["signals_feed"]) > MAX_SIGNALS_LIMIT:
-                        APP_STATE["signals_feed"].pop()  # Trim list to avoid memory leak
+                        APP_STATE["signals_feed"].pop()
                         
                     APP_STATE["active_signals_count"] = len(APP_STATE["signals_feed"])
         except Exception as e:
